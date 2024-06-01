@@ -10,6 +10,9 @@ pub enum Token {
     Identifier(String),
     Assign,
     Plus,
+    Minus,
+    Multiply,
+    Divide,
     Number(i32), // Numeric literal
     Semicolon,   // ';' character
 }
@@ -73,6 +76,18 @@ impl Lexer {
                 '+' => {
                     self.position += 1;
                     return Some(Token::Plus);
+                }
+                '-' => {
+                    self.position += 1;
+                    return Some(Token::Minus);
+                }
+                '*' => {
+                    self.position += 1;
+                    return Some(Token::Multiply);
+                }
+                '/' => {
+                    self.position += 1;
+                    return Some(Token::Divide);
                 }
                 ';' => {
                     self.position += 1;
@@ -203,9 +218,20 @@ impl Parser {
         let token = self.get_next_token().expect("Expected an expression");
         match token {
             Token::Plus => {
-                //self.position += 1; // Move past the '+'
                 let right = self.expect_operand();
                 Expression::BinaryOperation(Box::new(left), Operator::Add, Box::new(right))
+            }
+            Token::Minus => {
+                let right = self.expect_operand();
+                Expression::BinaryOperation(Box::new(left), Operator::Subtract, Box::new(right))
+            }
+            Token::Multiply => {
+                let right = self.expect_operand();
+                Expression::BinaryOperation(Box::new(left), Operator::Multiply, Box::new(right))
+            }
+            Token::Divide => {
+                let right = self.expect_operand();
+                Expression::BinaryOperation(Box::new(left), Operator::Divide, Box::new(right))
             }
             // Handle other operators similarly
             _ => left, // If there's no operator, return the operand as is
@@ -289,16 +315,29 @@ impl CodeGenerator {
                 let right_expr = CodeGenerator::generate_expression(right);
                 let op_str = match op {
                     Operator::Add => "add",
-                    Operator::Subtract => "-",
-                    Operator::Multiply => "*",
-                    Operator::Divide => "/",
+                    Operator::Subtract => "sub",
+                    Operator::Multiply => "mul",
+                    Operator::Divide => "div",
                 };
-                format!(
-                    "\tmov eax, {}\n\
-                        \t{} eax, {}\n\
-                        \tmov edi, eax",
-                    left_expr, op_str, right_expr
-                )
+                match op {
+                    Operator::Add | Operator::Subtract => {
+                        format!(
+                            "\tmov eax, {}\n\
+                            \t{} eax, {}\n\
+                            \tmov edi, eax",
+                            left_expr, op_str, right_expr
+                        )
+                    },
+                    Operator::Multiply | Operator::Divide => {
+                        format!(
+                            "\tmov eax, {}\n\
+                            \tmov ebx, {}\n\
+                            \t{} ebx\n\
+                            \tmov edi, eax",
+                            left_expr, right_expr, op_str
+                        )
+                    }
+                }
             }
         }
     }
