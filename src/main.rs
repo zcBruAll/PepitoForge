@@ -13,7 +13,7 @@ pub enum Token {
     Minus,
     Multiply,
     Divide,
-    Number(i32), // Numeric literal
+    Number(f64), // Numeric literal
     Semicolon,   // ';' character
 }
 
@@ -50,10 +50,10 @@ impl Lexer {
                         return Some(Token::Return);
                     }
                 }
-                // Handle the 'int' keyword
-                'i' => {
-                    if self.input[self.position..].starts_with("int") {
-                        self.position += 3; // Move past "int"
+                // Handle the 'Int' keyword
+                'I' => {
+                    if self.input[self.position..].starts_with("Int") {
+                        self.position += 3; // Move past "Int"
                         return Some(Token::Int);
                     }
                 }
@@ -78,8 +78,12 @@ impl Lexer {
                     return Some(Token::Plus);
                 }
                 '-' => {
-                    self.position += 1;
-                    return Some(Token::Minus);
+                    if self.position + 1 < self.input.len() && self.input.as_bytes()[self.position + 1].is_ascii_digit() {
+                        return Some(self.number());
+                    } else {
+                        self.position += 1;
+                        return Some(Token::Minus);
+                    }
                 }
                 '*' => {
                     self.position += 1;
@@ -104,14 +108,34 @@ impl Lexer {
     /// Helper function to handle numeric literals
     fn number(&mut self) -> Token {
         let start = self.position;
-        // Continue until we reach a non-digit character
+        let mut has_decimal = false;
+        let mut is_negative = false;
+
+        if self.input.as_bytes()[self.position] as char == '-' {
+            self.position += 1;
+            is_negative = true;
+        }
+
         while self.position < self.input.len()
-            && self.input.as_bytes()[self.position].is_ascii_digit()
+            && (self.input.as_bytes()[self.position].is_ascii_digit()
+                || self.input.as_bytes()[self.position] as char == '.')
         {
+            if self.input.as_bytes()[self.position] as char == '.' {
+                if has_decimal {
+                    panic!("Invalid number format");
+                }
+                has_decimal = true;
+            }
             self.position += 1;
         }
-        let number: i32 = self.input[start..self.position].parse().unwrap();
-        Token::Number(number)
+
+        let number_str = self.input[start..self.position].to_string();
+        let number = if has_decimal {
+            number_str.parse::<f64>().unwrap()
+        } else {
+            number_str.parse::<i32>().unwrap() as f64
+        };
+        Token::Number(if is_negative { -number } else { number })
     }
 }
 
@@ -133,7 +157,8 @@ pub enum Operator {
 /// Expression represents various expressions in our language
 #[derive(Debug)]
 pub enum Expression {
-    Number(i32),
+    Integer(i32),
+    Float(f64),
     Identifier(String),
     BinaryOperation(Box<Expression>, Operator, Box<Expression>),
 }
@@ -172,17 +197,17 @@ impl Parser {
                     self.position += 1;
                     let var_name = match self
                         .get_next_token()
-                        .expect("Expected an identifier after 'int'")
+                        .expect("Expected an identifier after 'Int'")
                     {
                         Token::Identifier(name) => name,
-                        _ => panic!("Expected an identifier after 'int'"),
+                        _ => panic!("Expected an identifier after 'Int'"),
                     };
                     self.expect_token(Token::Assign);
                     let value = match self
                         .get_next_token()
                         .expect("Expected an expression after assignment")
                     {
-                        Token::Number(n) => Expression::Number(n),
+                        Token::Number(n) => Expression::Integer(n as i32),
                         Token::Identifier(name) => Expression::Identifier(name),
                         _ => panic!("Expected a number or identifier after assignment"),
                     };
@@ -241,7 +266,13 @@ impl Parser {
     fn expect_operand(&mut self) -> Expression {
         let token = self.get_next_token().expect("Expected an operand");
         match token {
-            Token::Number(n) => Expression::Number(n),
+            Token::Number(n) => {
+                if n.fract() == 0.0 {
+                    Expression::Integer(n as i32)
+                } else {
+                    Expression::Float(n)
+                }
+            },
             Token::Identifier(name) => Expression::Identifier(name),
             _ => panic!("Expected a number or identifier"),
         }
@@ -308,7 +339,8 @@ impl CodeGenerator {
 
     fn generate_expression(expr: &Expression) -> String {
         match expr {
-            Expression::Number(n) => n.to_string(),
+            Expression::Integer(n) => n.to_string(),
+            Expression::Float(n) => n.to_string(),
             Expression::Identifier(name) => format!("[{}]", name.clone()),
             Expression::BinaryOperation(left, op, right) => {
                 let left_expr = CodeGenerator::generate_expression(left);
@@ -317,7 +349,7 @@ impl CodeGenerator {
                     Operator::Add => "add",
                     Operator::Subtract => "sub",
                     Operator::Multiply => "mul",
-                    Operator::Divide => "div",
+                    Operator::Divide => "fdiv",
                 };
                 match op {
                     Operator::Add | Operator::Subtract => {
