@@ -1,3 +1,4 @@
 Int var1 = 5;
 Int var2 = 10;
-return var1 / var2;
+print(var1 * var2);
+return 200;

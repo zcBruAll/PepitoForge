@@ -6,15 +6,18 @@ use std::process::Command;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Int,
-    Return, // 'return' keyword
+    Return,
+    Print,
+    BracketO,
+    BracketC,
     Identifier(String),
     Assign,
     Plus,
     Minus,
     Multiply,
     Divide,
-    Number(f64), // Numeric literal
-    Semicolon,   // ';' character
+    Number(f64),
+    Semicolon,
 }
 
 /// Lexer struct holds the input string and the current position in the string
@@ -48,6 +51,12 @@ impl Lexer {
                     if self.input[self.position..].starts_with("return") {
                         self.position += 6; // Move past "return"
                         return Some(Token::Return);
+                    }
+                }
+                'p' => {
+                    if self.input[self.position..].starts_with("print") {
+                        self.position += 5;
+                        return Some(Token::Print);
                     }
                 }
                 // Handle the 'Int' keyword
@@ -92,6 +101,14 @@ impl Lexer {
                 '/' => {
                     self.position += 1;
                     return Some(Token::Divide);
+                }
+                '(' => {
+                    self.position += 1;
+                    return Some(Token::BracketO);
+                }
+                ')' => {
+                    self.position += 1;
+                    return Some(Token::BracketC);
                 }
                 ';' => {
                     self.position += 1;
@@ -142,7 +159,8 @@ impl Lexer {
 /// ASTNode represents the different types of nodes in our Abstract Syntax Tree
 #[derive(Debug)]
 pub enum ASTNode {
-    Return(Vec<Box<Expression>>), // Return statement with a numeric value
+    Return(Box<Expression>),
+    Content(Vec<Box<Expression>>),
     VariableDeclaration(Vec<(String, Box<Expression>)>),
 }
 
@@ -161,6 +179,7 @@ pub enum Expression {
     Float(f64),
     Identifier(String),
     BinaryOperation(Box<Expression>, Operator, Box<Expression>),
+    Print(Box<Expression>)
 }
 
 /// Parser struct holds the tokens and the current position in the token stream
@@ -184,13 +203,14 @@ impl Parser {
 
         let mut text: Vec<Box<Expression>> = Vec::new();
         let mut variables: Vec<(String, Box<Expression>)> = Vec::new();
+        let mut _return: Box<Expression> = Box::new(Expression::Integer(0));
         while let Some(token) = self.tokens.get(self.position) {
             match token {
                 Token::Return => {
                     self.position += 1;
-                    let expr = self.expect_expression();
+                    let expr = self.expect_operand();
                     self.expect_token(Token::Semicolon); // Expect a semicolon
-                    text.push(Box::new(expr));
+                    _return = Box::new(expr);
                 }
 
                 Token::Int => {
@@ -214,12 +234,23 @@ impl Parser {
                     self.expect_token(Token::Semicolon);
                     variables.push((var_name, Box::new(value)));
                 }
+
+                Token::Print => {
+                    self.position += 1;
+                    self.expect_token(Token::BracketO);
+                    let expr = self.expect_expression();
+                    self.expect_token(Token::BracketC);
+                    self.expect_token(Token::Semicolon);
+                    text.push(Box::new(Expression::Print(Box::new(expr))));
+                }
+
                 _ => panic!("Unexpected token"),
             }
         }
 
         ast.push(ASTNode::VariableDeclaration(variables));
-        ast.push(ASTNode::Return(text));
+        ast.push(ASTNode::Content(text));
+        ast.push(ASTNode::Return(_return));
         ast
     }
 
@@ -259,7 +290,9 @@ impl Parser {
                 Expression::BinaryOperation(Box::new(left), Operator::Divide, Box::new(right))
             }
             // Handle other operators similarly
-            _ => left, // If there's no operator, return the operand as is
+            _ => {
+                left
+            } // If there's no operator, return the operand as is
         }
     }
 
@@ -286,22 +319,8 @@ impl CodeGenerator {
     /// Function to generate assembly code from the AST
     pub fn generate(ast: &ASTNode) -> String {
         match ast {
-            ASTNode::Return(values) => {
-                let text_section = values
-                    .iter()
-                    .map(|value| {
-                        CodeGenerator::generate_return(value)
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                format!(
-                    "section.text\n\
-                    global _start\n\n\
-                    \
-                    _start:\n\
-                    {}",
-                    text_section
-                )
+            ASTNode::Return(value) => {
+                CodeGenerator::generate_return(value)
             } // Generate the assembly code to exit with the return value
             ASTNode::VariableDeclaration(variables) => {
                 let bss_section = variables
@@ -312,9 +331,26 @@ impl CodeGenerator {
                     .collect::<Vec<String>>()
                     .join("\n");
                 format!(
-                    "section.bss\n\
-                    {}\n\n",
+                    "\nsection.bss\n\
+                    {}\n",
                     bss_section
+                )
+            }
+            ASTNode::Content(values) => {
+                let text_section = values
+                    .iter()
+                    .map(|expr| {
+                        CodeGenerator::generate_expression(expr)
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                format!(
+                    "\nsection.text\n\
+                    global _start\n\n\
+                    \
+                    _start:\n\
+                    {}\n",
+                    text_section
                 )
             }
         }
@@ -322,9 +358,9 @@ impl CodeGenerator {
 
     fn generate_return(value: &Expression) -> String {
         format!(
-            "{}\n\
-            \tmov eax, 60  ; syscall: exit\n\
-            \tsyscall\n",
+            "\tmov eax, 1  ; exit\n\
+            \tmov ebx, {}\n\
+            \tint 80h",
             CodeGenerator::generate_expression(value)
         )
     }
@@ -349,14 +385,14 @@ impl CodeGenerator {
                     Operator::Add => "add",
                     Operator::Subtract => "sub",
                     Operator::Multiply => "mul",
-                    Operator::Divide => "fdiv",
+                    Operator::Divide => "div",
                 };
                 match op {
                     Operator::Add | Operator::Subtract => {
                         format!(
                             "\tmov eax, {}\n\
                             \t{} eax, {}\n\
-                            \tmov edi, eax",
+                            \tmov edi, eax\n",
                             left_expr, op_str, right_expr
                         )
                     },
@@ -365,11 +401,21 @@ impl CodeGenerator {
                             "\tmov eax, {}\n\
                             \tmov ebx, {}\n\
                             \t{} ebx\n\
-                            \tmov edi, eax",
+                            \tmov edi, eax\n",
                             left_expr, right_expr, op_str
                         )
                     }
                 }
+            },
+            Expression::Print(to_print) => {
+                let to_print_expr = CodeGenerator::generate_expression(to_print);
+                format!(
+                    "{}\n\
+                    \tmov eax, 4  ; Write in console\n\
+                    \tmov ebx, 1\n\
+                    \tmov ecx, edi\n\
+                    \tmov edx, 5\n\
+                    \tint 80h\n", to_print_expr)
             }
         }
     }
