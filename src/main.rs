@@ -87,7 +87,9 @@ impl Lexer {
                     return Some(Token::Plus);
                 }
                 '-' => {
-                    if self.position + 1 < self.input.len() && self.input.as_bytes()[self.position + 1].is_ascii_digit() {
+                    if self.position + 1 < self.input.len()
+                        && self.input.as_bytes()[self.position + 1].is_ascii_digit()
+                    {
                         return Some(self.number());
                     } else {
                         self.position += 1;
@@ -179,7 +181,7 @@ pub enum Expression {
     Float(f64),
     Identifier(String),
     BinaryOperation(Box<Expression>, Operator, Box<Expression>),
-    Print(Box<Expression>)
+    Print(Box<Expression>),
 }
 
 /// Parser struct holds the tokens and the current position in the token stream
@@ -290,9 +292,7 @@ impl Parser {
                 Expression::BinaryOperation(Box::new(left), Operator::Divide, Box::new(right))
             }
             // Handle other operators similarly
-            _ => {
-                left
-            } // If there's no operator, return the operand as is
+            _ => left, // If there's no operator, return the operand as is
         }
     }
 
@@ -305,7 +305,7 @@ impl Parser {
                 } else {
                     Expression::Float(n)
                 }
-            },
+            }
             Token::Identifier(name) => Expression::Identifier(name),
             _ => panic!("Expected a number or identifier"),
         }
@@ -319,9 +319,7 @@ impl CodeGenerator {
     /// Function to generate assembly code from the AST
     pub fn generate(ast: &ASTNode) -> String {
         match ast {
-            ASTNode::Return(value) => {
-                CodeGenerator::generate_return(value)
-            } // Generate the assembly code to exit with the return value
+            ASTNode::Return(value) => CodeGenerator::generate_return(value), // Generate the assembly code to exit with the return value
             ASTNode::VariableDeclaration(variables) => {
                 let bss_section = variables
                     .iter()
@@ -332,6 +330,7 @@ impl CodeGenerator {
                     .join("\n");
                 format!(
                     "\nsection.bss\n\
+                    \tbuffer resb 21  ; Reserve 11 bytes for the largest 32-bit integer\n\
                     {}\n",
                     bss_section
                 )
@@ -339,14 +338,13 @@ impl CodeGenerator {
             ASTNode::Content(values) => {
                 let text_section = values
                     .iter()
-                    .map(|expr| {
-                        CodeGenerator::generate_expression(expr)
-                    })
+                    .map(|expr| CodeGenerator::generate_expression(expr))
                     .collect::<Vec<String>>()
                     .join("\n");
                 format!(
                     "\nsection.text\n\
-                    global _start\n\n\
+                    global _start\n\
+                    extern int_to_string\n\
                     \
                     _start:\n\
                     {}\n",
@@ -358,16 +356,16 @@ impl CodeGenerator {
 
     fn generate_return(value: &Expression) -> String {
         format!(
-            "\tmov eax, 1  ; exit\n\
-            \tmov ebx, {}\n\
-            \tint 80h",
+            "\tmov rax, 1  ; exit\n\
+            \tmov rbx, {}\n\
+            \tsyscall",
             CodeGenerator::generate_expression(value)
         )
     }
 
     fn generate_variable_declaration(var_name: &str, value: &Expression) -> String {
         format!(
-            "\t{} dd {}",
+            "\t{} dq {}",
             var_name,
             CodeGenerator::generate_expression(value)
         )
@@ -390,32 +388,36 @@ impl CodeGenerator {
                 match op {
                     Operator::Add | Operator::Subtract => {
                         format!(
-                            "\tmov eax, {}\n\
-                            \t{} eax, {}\n\
-                            \tmov edi, eax\n",
+                            "\tmov rax, {}\n\
+                            \t{} rax, {}\n\
+                            \tmov rdi, rax\n",
                             left_expr, op_str, right_expr
                         )
-                    },
+                    }
                     Operator::Multiply | Operator::Divide => {
                         format!(
-                            "\tmov eax, {}\n\
-                            \tmov ebx, {}\n\
-                            \t{} ebx\n\
-                            \tmov edi, eax\n",
+                            "\tmov rax, {}\n\
+                            \tmov rbx, {}\n\
+                            \t{} rbx\n\
+                            \tmov rdi, rax\n",
                             left_expr, right_expr, op_str
                         )
                     }
                 }
-            },
+            }
             Expression::Print(to_print) => {
                 let to_print_expr = CodeGenerator::generate_expression(to_print);
                 format!(
                     "{}\n\
-                    \tmov eax, 4  ; Write in console\n\
-                    \tmov ebx, 1\n\
-                    \tmov ecx, edi\n\
-                    \tmov edx, 5\n\
-                    \tint 80h\n", to_print_expr)
+                    \tmov rsi, [buffer]\n\
+                    \tcall int_to_string\n\n\
+                    \tmov rax, 4            ; Write in console\n\
+                    \tmov rbx, rbx\n\
+                    \tmov rcx, rsi\n\
+                    \tmov rdx, 21\n\
+                    \tsyscall\n",
+                    to_print_expr
+                )
             }
         }
     }
@@ -454,24 +456,32 @@ fn main() {
     }
     println!("{}", assembly);
 
-    // Write the assembly code to a file
-    let asm_filename = "output.asm";
-    fs::write(asm_filename, assembly).expect("Could not write assembly file");
+    let mut asm_to_compile: Vec<String> = Vec::new();
+    asm_to_compile.push("output.asm".to_string());
+    asm_to_compile.push("int_to_string.asm".to_string());
+
+    fs::write(asm_to_compile[0].clone(), assembly).expect("Could not write assembly file");
 
     // Assemble the code using nasm
-    let output = Command::new("nasm")
-        .args(&["-felf64", asm_filename])
-        .output()
-        .expect("Failed to execute nasm");
-    if !output.status.success() {
-        eprintln!("nasm failed: {}", String::from_utf8_lossy(&output.stderr));
-        std::process::exit(1);
+    for asm_file in &asm_to_compile {
+        let output = Command::new("nasm")
+            .args(&["-felf64", &asm_file])
+            .output()
+            .expect("Failed to execute nasm");
+        if !output.status.success() {
+            eprintln!("nasm failed: {}", String::from_utf8_lossy(&output.stderr));
+            std::process::exit(1);
+        }
     }
-
     // Link the object file to create the executable
-    let obj_filename = "output.o";
+    let obj_filename = asm_to_compile
+        .iter()
+        .map(|filename| filename.replace(".asm", ".o"))
+        .collect::<Vec<String>>()
+        .join(" ");
+
     let output = Command::new("ld")
-        .args(&["-o", "output", obj_filename])
+        .args(&["-o", "output", &obj_filename])
         .output()
         .expect("Failed to execute ld");
     if !output.status.success() {
