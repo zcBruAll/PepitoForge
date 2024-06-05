@@ -1,4 +1,2 @@
-Int var1 = 5;
-Int var2 = 10;
-print(var1 * var2);
-return 200;
+String myString = "This works";
+print(myString);

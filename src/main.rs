@@ -17,7 +17,10 @@ pub enum Token {
     Multiply,
     Divide,
     Number(f64),
+    StringLiteral(String),
     Semicolon,
+    String,
+    DoubleQuote,
 }
 
 /// Lexer struct holds the input string and the current position in the string
@@ -64,6 +67,26 @@ impl Lexer {
                     if self.input[self.position..].starts_with("Int") {
                         self.position += 3; // Move past "Int"
                         return Some(Token::Int);
+                    }
+                }
+                'S' => {
+                    if self.input[self.position..].starts_with("String") {
+                        self.position += 6;
+                        return Some(Token::String);
+                    }
+                }
+                '"' => {
+                    self.position += 1; // Skip the opening quote
+                    let start = self.position;
+                    while self.position < self.input.len() && self.input.as_bytes()[self.position] as char != '"' {
+                        self.position += 1;
+                    }
+                    if self.position < self.input.len() && self.input.as_bytes()[self.position] as char == '"' {
+                        let string_content = self.input[start..self.position].to_string();
+                        self.position += 1;
+                        return Some(Token::StringLiteral(string_content));
+                    } else {
+                        panic!("Unterminated string literal");
                     }
                 }
                 // Handle identifiers
@@ -163,7 +186,7 @@ impl Lexer {
 pub enum ASTNode {
     Return(Box<Expression>),
     Content(Vec<Box<Expression>>),
-    VariableDeclaration(Vec<(String, Box<Expression>)>),
+    VariableDeclaration(Vec<(String, String, Box<Expression>)>),
 }
 
 #[derive(Debug)]
@@ -179,6 +202,7 @@ pub enum Operator {
 pub enum Expression {
     Integer(i32),
     Float(f64),
+    String(String),
     Identifier(String),
     BinaryOperation(Box<Expression>, Operator, Box<Expression>),
     Print(Box<Expression>),
@@ -204,7 +228,7 @@ impl Parser {
         let mut ast: Vec<ASTNode> = Vec::new();
 
         let mut text: Vec<Box<Expression>> = Vec::new();
-        let mut variables: Vec<(String, Box<Expression>)> = Vec::new();
+        let mut variables: Vec<(String, String, Box<Expression>)> = Vec::new();
         let mut _return: Box<Expression> = Box::new(Expression::Integer(0));
         while let Some(token) = self.tokens.get(self.position) {
             match token {
@@ -234,13 +258,35 @@ impl Parser {
                         _ => panic!("Expected a number or identifier after assignment"),
                     };
                     self.expect_token(Token::Semicolon);
-                    variables.push((var_name, Box::new(value)));
+                    variables.push((var_name, "dq".to_string(), Box::new(value)));
+                }
+
+                Token::String => {
+                    self.position += 1;
+                    let var_name = match self
+                        .get_next_token()
+                        .expect("Expected an identifier after 'String'")
+                    {
+                        Token::Identifier(name) => name,
+                        _ => panic!("Expected an identifier after 'String'")
+                    };
+                    self.expect_token(Token::Assign);
+                    let value = match self
+                        .get_next_token()
+                        .expect("Expected an expression after assignment")
+                    {
+                        Token::StringLiteral(s) => Expression::String(s),
+                        Token::Identifier(name) => Expression::Identifier(name),
+                        _ => panic!("Expected a string or identifier after assignment")
+                    };
+                    self.expect_token(Token::Semicolon);
+                    variables.push((var_name, "db".to_string(), Box::new(value)))
                 }
 
                 Token::Print => {
                     self.position += 1;
                     self.expect_token(Token::BracketO);
-                    let expr = self.expect_expression();
+                    let expr = self.expect_operand();
                     self.expect_token(Token::BracketC);
                     self.expect_token(Token::Semicolon);
                     text.push(Box::new(Expression::Print(Box::new(expr))));
@@ -319,12 +365,18 @@ impl CodeGenerator {
     /// Function to generate assembly code from the AST
     pub fn generate(ast: &ASTNode) -> String {
         match ast {
-            ASTNode::Return(value) => CodeGenerator::generate_return(value), // Generate the assembly code to exit with the return value
+            ASTNode::Return(value) => {
+                format!(
+                    "\txor rdi, rdi\n\
+                    \tmov rax, 60\n\
+                    \tsyscall"
+                )
+            }, // Generate the assembly code to exit with the return value
             ASTNode::VariableDeclaration(variables) => {
                 let bss_section = variables
                     .iter()
-                    .map(|(var_name, value)| {
-                        CodeGenerator::generate_variable_declaration(var_name, value)
+                    .map(|(var_name, var_type, value)| {
+                        CodeGenerator::generate_variable_declaration(var_name, var_type, value)
                     })
                     .collect::<Vec<String>>()
                     .join("\n");
@@ -342,9 +394,9 @@ impl CodeGenerator {
                     .collect::<Vec<String>>()
                     .join("\n");
                 format!(
-                    "\nsection.text\n\
+                    "\nsection .text\n\
                     global _start\n\
-                    extern int_to_string\n\
+                    extern int_to_string\n\n\
                     \
                     _start:\n\
                     {}\n",
@@ -356,17 +408,18 @@ impl CodeGenerator {
 
     fn generate_return(value: &Expression) -> String {
         format!(
-            "\tmov rax, 1  ; exit\n\
+            "\tmov rax, 60  ; exit\n\
             \tmov rbx, {}\n\
             \tsyscall",
             CodeGenerator::generate_expression(value)
         )
     }
 
-    fn generate_variable_declaration(var_name: &str, value: &Expression) -> String {
+    fn generate_variable_declaration(var_name: &str, var_type: &str, value: &Expression) -> String {
         format!(
-            "\t{} dq {}",
+            "\t{} {} {}",
             var_name,
+            var_type,
             CodeGenerator::generate_expression(value)
         )
     }
@@ -375,6 +428,7 @@ impl CodeGenerator {
         match expr {
             Expression::Integer(n) => n.to_string(),
             Expression::Float(n) => n.to_string(),
+            Expression::String(s) => format!("'{}'", s),
             Expression::Identifier(name) => format!("[{}]", name.clone()),
             Expression::BinaryOperation(left, op, right) => {
                 let left_expr = CodeGenerator::generate_expression(left);
@@ -409,11 +463,15 @@ impl CodeGenerator {
                 let to_print_expr = CodeGenerator::generate_expression(to_print);
                 format!(
                     "{}\n\
-                    \tmov rsi, [buffer]\n\
+                    \tlea rsi, [buffer + 20]\n\
                     \tcall int_to_string\n\n\
+                    \
+                    \tlea rdi, [buffer + 20]\n\
+                    \tsub rdi, rsi\n\
+                    \tsub rsi, rdi\n\n\
+                    \
                     \tmov rax, 4            ; Write in console\n\
-                    \tmov rbx, rbx\n\
-                    \tmov rcx, rsi\n\
+                    \tmov rdi, 1\n\
                     \tmov rdx, 21\n\
                     \tsyscall\n",
                     to_print_expr
@@ -473,15 +531,10 @@ fn main() {
             std::process::exit(1);
         }
     }
-    // Link the object file to create the executable
-    let obj_filename = asm_to_compile
-        .iter()
-        .map(|filename| filename.replace(".asm", ".o"))
-        .collect::<Vec<String>>()
-        .join(" ");
 
+    let args = vec!["-o", "output", "output.o", "int_to_string.o"];
     let output = Command::new("ld")
-        .args(&["-o", "output", &obj_filename])
+        .args(&args)
         .output()
         .expect("Failed to execute ld");
     if !output.status.success() {

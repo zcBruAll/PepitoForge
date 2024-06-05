@@ -39,4 +39,4 @@ convert_done:
     pop rcx
     pop rbx
     pop rax
-    syscall
+    ret                   ; Use ret instead of syscall to return to caller

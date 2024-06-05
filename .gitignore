@@ -1,4 +1,4 @@
 /target
 output
-output.o
 output.asm
+*.o
