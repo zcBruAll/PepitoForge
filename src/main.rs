@@ -286,7 +286,7 @@ impl Parser {
                 Token::Print => {
                     self.position += 1;
                     self.expect_token(Token::BracketO);
-                    let expr = self.expect_operand();
+                    let expr = self.expect_expression();
                     self.expect_token(Token::BracketC);
                     self.expect_token(Token::Semicolon);
                     text.push(Box::new(Expression::Print(Box::new(expr))));
@@ -381,9 +381,11 @@ impl CodeGenerator {
                     .collect::<Vec<String>>()
                     .join("\n");
                 format!(
-                    "\nsection.bss\n\
-                    \tbuffer resb 21  ; Reserve 11 bytes for the largest 32-bit integer\n\
-                    {}\n",
+                    "section .data\n\
+                    \tnewline db 0xA\n\
+                    {}\n\n\
+                    section .bss\n\
+                    \tbuffer resb 20\n",
                     bss_section
                 )
             }
@@ -395,8 +397,8 @@ impl CodeGenerator {
                     .join("\n");
                 format!(
                     "\nsection .text\n\
-                    global _start\n\
-                    extern int_to_string\n\n\
+                    \textern int_to_string\n\
+                    \tglobal _start\n\n\
                     \
                     _start:\n\
                     {}\n",
@@ -417,10 +419,19 @@ impl CodeGenerator {
 
     fn generate_variable_declaration(var_name: &str, var_type: &str, value: &Expression) -> String {
         format!(
-            "\t{} {} {}",
+            "\t{} {} {}{}",
             var_name,
             var_type,
-            CodeGenerator::generate_expression(value)
+            CodeGenerator::generate_expression(value),
+            if var_type == "db" {
+                format!(
+                    "\n\
+                    \tlen_{} equ $ - {}",
+                    var_name, var_name
+                )
+            } else {
+                format!("")
+            }
         )
     }
 
@@ -429,7 +440,7 @@ impl CodeGenerator {
             Expression::Integer(n) => n.to_string(),
             Expression::Float(n) => n.to_string(),
             Expression::String(s) => format!("'{}'", s),
-            Expression::Identifier(name) => format!("[{}]", name.clone()),
+            Expression::Identifier(name) => format!("{}", name.clone()),
             Expression::BinaryOperation(left, op, right) => {
                 let left_expr = CodeGenerator::generate_expression(left);
                 let right_expr = CodeGenerator::generate_expression(right);
@@ -442,18 +453,16 @@ impl CodeGenerator {
                 match op {
                     Operator::Add | Operator::Subtract => {
                         format!(
-                            "\tmov rax, {}\n\
-                            \t{} rax, {}\n\
-                            \tmov rdi, rax\n",
+                            "\tmov rax, [{}]\n\
+                            \t{} rax, [{}]\n",
                             left_expr, op_str, right_expr
                         )
                     }
                     Operator::Multiply | Operator::Divide => {
                         format!(
-                            "\tmov rax, {}\n\
-                            \tmov rbx, {}\n\
-                            \t{} rbx\n\
-                            \tmov rdi, rax\n",
+                            "\tmov rax, [{}]\n\
+                            \tmov rbx, [{}]\n\
+                            \t{} rbx\n",
                             left_expr, right_expr, op_str
                         )
                     }
@@ -463,16 +472,19 @@ impl CodeGenerator {
                 let to_print_expr = CodeGenerator::generate_expression(to_print);
                 format!(
                     "{}\n\
-                    \tlea rsi, [buffer + 20]\n\
+                    \tlea rdi, [buffer]\n\n\
                     \tcall int_to_string\n\n\
-                    \
-                    \tlea rdi, [buffer + 20]\n\
-                    \tsub rdi, rsi\n\
-                    \tsub rsi, rdi\n\n\
-                    \
-                    \tmov rax, 4            ; Write in console\n\
+                    \tmov rax, 1            ; Write in console\n\
                     \tmov rdi, 1\n\
-                    \tmov rdx, 21\n\
+                    \tlea rsi, [buffer]\n\
+                    \tlea rdx, [buffer + 20]\n\
+                    \tsub rdx, rsi\n\
+                    \tsyscall\n\n\
+                    \
+                    \tmov rax, 1\n\
+                    \tmov rdi, 1\n\
+                    \tmov rsi, newline\n\
+                    \tmov rdx, 1\n\
                     \tsyscall\n",
                     to_print_expr
                 )

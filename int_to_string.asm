@@ -1,42 +1,29 @@
 section .text
-global int_to_string
+    global int_to_string
 
 int_to_string:
     ; Input: rdi = integer to convert
     ; Output: rsi = pointer to the resulting string (buffer)
 
     ; Save registers that will be modified
-    push rax
     push rbx
-    push rcx
     push rdx
 
-    mov rcx, 10           ; RCX will be used as the divisor for division by 10
-    mov rbx, rdi          ; Store the value of RDI in RBX
-    xor rdx, rdx          ; Clear RDX before the division
+    mov rbx, 10           ; RCX will be used as the divisor for division by 10
+    lea rsi, [rdi + 19]
+    mov byte [rsi], 0
 
-    ; Check if the number is zero
-    cmp rbx, 0
-    jnz convert_loop
-    mov byte [rsi], '0'
-    inc rsi
-    jmp convert_done
+divide_loop:
+    xor rdx, rdx       ; Clear RDX to ensure high bits are zero for division
+    div rbx            ; Divide RAX by RBX; quotient in RAX, remainder in RDX
 
-convert_loop:
-    xor rdx, rdx          ; Clear RDX for division
-    div rcx               ; Divide RAX by RCX, quotient in RAX, remainder in RDX
-    add dl, '0'           ; Convert remainder to ASCII
-    dec rsi               ; Move pointer to the left
-    mov [rsi], dl         ; Store the ASCII character
-    test rax, rax         ; Check if the quotient is zero
-    jnz convert_loop      ; If not, continue dividing
+    add dl, '0'        ; Convert the remainder to ASCII
+    dec rsi            ; Move buffer pointer back
+    mov [rsi], dl      ; Store the ASCII character in buffer
 
-    inc rsi               ; Adjust RSI to point to the start of the string
+    test rax, rax
+    jnz divide_loop    ; If the quotient is not zero, continue the loop
 
-convert_done:
-    ; Restore registers
     pop rdx
-    pop rcx
     pop rbx
-    pop rax
-    ret                   ; Use ret instead of syscall to return to caller
+    ret
