@@ -182,7 +182,6 @@ impl Parser {
             _ => None,
         }
     }
-    
 }
 
 #[cfg(test)]

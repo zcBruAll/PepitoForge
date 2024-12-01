@@ -32,11 +32,11 @@ impl Compiler {
             Stmt::VarDeclaration(name, expr) => {
                 self.declare_variable(&name);
                 let value = self.compile_expr(expr);
-                self.assembly.push(format!("mov dword [{}], {}", name, value));
+                self.assembly.push(format!("mov dword [{}], {}\n", name, value));
             }
             Stmt::Expression(expr) => {
                 let value = self.compile_expr(expr);
-                self.assembly.push(format!("; evaluate {}", value));
+                self.assembly.push(format!("; evaluate {}\n", value));
             }
         }
     }
@@ -46,16 +46,27 @@ impl Compiler {
             Expr::Literal(value) => format!("{}", value),
             Expr::Variable(name) => format!("[{}]", name),
             Expr::BinaryOp(left, op, right) => {
+                let mut right_value = self.compile_expr(*right);
+                if right_value == "eax" {
+                    // self.assembly.push(format!("mov ebx, eax"));
+                    self.assembly.push(format!("push eax"));
+                    right_value = "ebx".to_string();
+                }
+
                 let left_value = self.compile_expr(*left);
-                let right_value = self.compile_expr(*right);
-                
-                self.assembly.push(format!("mov rax, {}", left_value));
-                
+                if left_value != "eax" {
+                    self.assembly.push(format!("mov eax, {}", left_value));
+                }
+
+                if right_value == "ebx" {
+                    self.assembly.push(format!("pop ebx"));
+                }
+
                 if op == Op::Divide {
-                    self.assembly.push(format!("mov rdx, 0"));
+                    self.assembly.push(format!("mov edx, 0"));
                     self.assembly.push(format!("div {}", right_value));
                 } else {
-                    self.assembly.push(format!("{} rax, {}", 
+                    self.assembly.push(format!("{} eax, {}", 
                     match op {
                         Op::Add => "add",
                         Op::Substract => "sub",
@@ -64,7 +75,7 @@ impl Compiler {
                     }, right_value));
                 }
 
-                "rax".to_string()
+                "eax".to_string()
             }
         }
     }
@@ -87,8 +98,8 @@ impl Compiler {
             writeln!(file, "\t{}", line).expect("Unable to write to file");
         }
 
-        writeln!(file, "\n\tmov rax, 60").expect("Unable to write to file");
-        writeln!(file, "\txor rdi, rdi").expect("Unable to write to file");
+        writeln!(file, "\tmov eax, 60").expect("Unable to write to file");
+        writeln!(file, "\txor edi, edi").expect("Unable to write to file");
         writeln!(file, "\tsyscall").expect("Unable to write to file");
     }
 
@@ -119,7 +130,7 @@ mod test {
         compiler.compile_stmt(stmt);
 
         assert_eq!(compiler.get_variables(), vec!["x"]);
-        assert_eq!(compiler.get_assembly(), vec!["mov [x], 10"]);
+        assert_eq!(compiler.get_assembly(), vec!["mov dword [x], 10\n"]);
     }
 
     #[test]
@@ -134,9 +145,9 @@ mod test {
         compiler.compile_stmt(Stmt::Expression(expr));
 
         assert_eq!(compiler.get_assembly(), vec![
-            "mov rax, 10",
-            "add rax, 20",
-            "; evaluate rax",
+            "mov eax, 10",
+            "add eax, 20",
+            "; evaluate eax\n",
         ]);
     }
 }

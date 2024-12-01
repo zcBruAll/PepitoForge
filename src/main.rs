@@ -10,7 +10,8 @@ fn main() {
     let input = "
         var x = 10;
         var y = 20;
-        x + y;
+        var z = x + y;
+        x / (y * z) - x + y;
     ";
 
     let mut lexer = Lexer::new(input.to_string());
