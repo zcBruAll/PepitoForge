@@ -38,6 +38,9 @@ impl Compiler {
                 let value = self.compile_expr(expr);
                 self.assembly.push(format!("; evaluate {}\n", value));
             }
+            Stmt::If { condition, then_block, else_block } => {
+                panic!("If statements comming soon!")
+            }
         }
     }
 
@@ -76,7 +79,8 @@ impl Compiler {
                 }
 
                 "eax".to_string()
-            }
+            },
+            Expr::BooleanOp(left, op, right) => todo!("Boolean operations coming soon!")
         }
     }
 

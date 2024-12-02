@@ -1,18 +1,28 @@
 /* PepitoCode Grammar
  * --------------------------
- * program              ::= statement*
- * statement            ::= var_declaration | expression_statement
- * var_declaration      ::= 'var' identifier '=' expression ';'
- * expression_statement ::= expression ';'
- * expression           ::= term (('+' | '-') term)*
- * term                 ::= factor (('*' | '/') factor)*
- * factor               ::= number | identifier | '(' expression ')'
+ * program                  ::= statement*
+ * statement                ::= var_declaration | expression_statement | conditional_statement
+ * var_declaration          ::= 'var' identifier '=' expression ';'
+ * expression_statement     ::= expression ';'
+ * conditional_statement    ::= 'if' '(' comparison ')' block ('else if' '(' expression ')' block)* ('else' block)?
+ * condition                ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
+ * block                    ::= '{' statement* '}'
+ * expression               ::= term (('+' | '-') term)*
+ * term                     ::= factor (('*' | '/') factor)*
+ * factor                   ::= number | identifier | '(' expression ')'
  * ==========================================================
  * This allows:
- * var x = 10;
- * var y = x + 10;
- * x + 5 * y;
-*/
+ * if (x > 10) {
+ *     var y = x + 5;
+ * } else if (x == 10) {
+ *     var y = x * 2;
+ * } else {
+ *     var y = 0;
+ * }
+ */
+
+
+use core::panic;
 
 use crate::lexer::Token;
 
@@ -21,12 +31,19 @@ pub enum Expr {
     Literal(i32),
     Variable(String),
     BinaryOp(Box<Expr>, Op, Box<Expr>),
+    BooleanOp(Box<Expr>, BoolOp, Box<Expr>),
+    // TODO: LogicalOp
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Stmt {
     VarDeclaration(String, Expr),
     Expression(Expr),
+    If {
+        condition: Box<Expr>,
+        then_block: Vec<Stmt>,
+        else_block: Option<Vec<Stmt>>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -35,6 +52,16 @@ pub enum Op {
     Substract,
     Multiply,
     Divide,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum BoolOp {
+    Greater,
+    Lower,
+    GreaterOrEq,
+    LowerOrEq,
+    Equal,
+    NotEqual,
 }
 
 pub struct Parser {
@@ -71,9 +98,11 @@ impl Parser {
         statements
     }
 
+    // statement ::= var_declaration | expression_statement | conditional_statement
     pub fn parse_statement(&mut self) -> Option<Stmt> {
         match self.current_token() {
             Some(Token::Var) => self.parse_var_declaration(),
+            Some(Token::If) => self.parse_conditional_statement(),
             _ => self.parse_expression_statement()
         }
     }
@@ -109,6 +138,122 @@ impl Parser {
             self.advance();
             return Some(Stmt::Expression(expr));
         }
+        None
+    }
+
+    // conditional_statement ::= 'if' '(' expression ')' block ('else if' '(' expression ')' block)* ('else' block)?
+    pub fn parse_conditional_statement(&mut self) -> Option<Stmt> {
+        if let Some(Token::If) = self.current_token() {
+            self.advance();
+            if let Some(Token::LParen) = self.current_token() {
+                self.advance();
+                let condition = self.parse_condition()?;
+                if let Some(Token::RParen) = self.current_token() {
+                    self.advance();
+                } else {
+                    panic!("Expected ')' after the if condition");
+                }
+
+                let then_block = self.parse_block()?;
+
+                let else_block = self.parse_else_block();
+
+                return Some(Stmt::If { 
+                    condition: Box::new(condition), 
+                    then_block, 
+                    else_block, })
+            } else {
+                panic!("Expected '(' after 'if'");
+            }
+        }
+        
+        None
+    }
+
+    // condition ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
+    pub fn parse_condition(&mut self) -> Option<Expr> {
+        let mut expr = self.parse_expression()?;
+
+        match self.current_token()? {
+            Token::Lower => {
+                self.advance();
+                let mut op = BoolOp::Lower;
+                if let Some(Token::Equals) = self.current_token() {
+                    self.advance();
+                    op = BoolOp::LowerOrEq;
+                }
+                let right = self.parse_expression()?;
+                expr = Expr::BooleanOp(Box::new(expr), op, Box::new(right));
+            }
+            Token::Greater => {
+                self.advance();
+                let mut op = BoolOp::Greater;
+                if let Some(Token::Equals) = self.current_token() {
+                    self.advance();
+                    op = BoolOp::GreaterOrEq
+                }
+                let right = self.parse_expression()?;
+                expr = Expr::BooleanOp(Box::new(expr), op, Box::new(right));
+            }
+            Token::Equals => {
+                self.advance();
+                if let Some(Token::Equals) = self.current_token() {
+                    self.advance();
+                    let right = self.parse_expression()?;
+                    expr = Expr::BooleanOp(Box::new(expr), BoolOp::Equal, Box::new(right));
+                }
+            }
+            Token::Exclamation => {
+                self.advance();
+                if let Some(Token::Equals) = self.current_token() {
+                    self.advance();
+                    let right = self.parse_expression()?;
+                    expr = Expr::BooleanOp(Box::new(expr), BoolOp::NotEqual, Box::new(right));
+                }
+            }
+            _ => panic!("Invalid condition"),
+        }
+
+        Some(expr)
+    }
+
+    // else_block ::= ('else' block)?
+    pub fn parse_else_block(&mut self) -> Option<Vec<Stmt>> {
+        if let Some(Token::Else) = self.current_token() {
+            self.advance();
+
+            if let Some(Token::If) = self.current_token() {
+                return Some(vec![self.parse_conditional_statement()?])
+            }
+
+            return self.parse_block();
+        }
+
+        None
+    }
+
+    // block ::= '{' statement* '}'
+    pub fn parse_block(&mut self) -> Option<Vec<Stmt>> {
+        if let Some(Token::LBrace) = self.current_token() {
+            self.advance();
+
+            let mut stmts = Vec::new();
+            while let Some(token) = self.current_token() {
+                if token == &Token::RBrace {
+                    break;
+                }
+                let stmt = self.parse_statement()?;
+                stmts.push(stmt);
+            }
+
+            if let Some(Token::RBrace) = self.current_token() {
+                self.advance();
+                return Some(stmts);
+            } else {
+                panic!("Expected '}}' to close block");
+            }
+        }
+
         None
     }
 
@@ -186,7 +331,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::Op;
+    use crate::parser::{BoolOp, Op};
     use crate::{lexer::Lexer, parser::{Expr, Parser, Stmt}};
 
     #[test]
@@ -219,6 +364,295 @@ mod tests {
                     Box::new(Expr::Literal(2))
                 ))
             ))
+        );
+    }
+
+    #[test]
+    fn test_if_elseif_else() {
+        let input = "
+            if (x > 10) {
+                var y = x * 2;
+            } else if (x > 5) {
+                var y = x + 1;
+            } else {
+                var y = 0;
+            }
+        ";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(
+            cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Greater,
+                    Box::new(Expr::Literal(10)),
+                )),
+                then_block: vec![
+                    Stmt::VarDeclaration(
+                        "y".to_string(),
+                        Expr::BinaryOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            Op::Multiply,
+                            Box::new(Expr::Literal(2)),
+                        ),
+                    ),
+                ],
+                else_block: Some(vec![
+                    Stmt::If {
+                        condition: Box::new(Expr::BooleanOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            BoolOp::Greater,
+                            Box::new(Expr::Literal(5)),
+                        )),
+                        then_block: vec![
+                            Stmt::VarDeclaration(
+                                "y".to_string(),
+                                Expr::BinaryOp(
+                                    Box::new(Expr::Variable("x".to_string())),
+                                    Op::Add,
+                                    Box::new(Expr::Literal(1)),
+                                ),
+                            ),
+                        ],
+                        else_block: Some(vec![
+                            Stmt::VarDeclaration(
+                                "y".to_string(),
+                                Expr::Literal(0),
+                            ),
+                        ]),
+                    },
+                ]),
+            }
+            )
+        )
+    }
+
+    #[test]
+    fn test_if_else() {
+        let input = "
+            if (x > 0) {
+                var a = 1;
+            } else {
+                if (y == 2) {
+                    var b = 2;
+                }
+            }
+        ";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Greater,
+                    Box::new(Expr::Literal(0)),
+                )),
+                then_block: vec![
+                    Stmt::VarDeclaration("a".to_string(), Expr::Literal(1)),
+                ],
+                else_block: Some(vec![
+                    Stmt::If {
+                        condition: Box::new(Expr::BooleanOp(
+                            Box::new(Expr::Variable("y".to_string())),
+                            BoolOp::Equal,
+                            Box::new(Expr::Literal(2)),
+                        )),
+                        then_block: vec![
+                            Stmt::VarDeclaration("b".to_string(), Expr::Literal(2)),
+                        ],
+                        else_block: None,
+                    },
+                ]),
+            })
+        );
+    }
+
+    #[test]
+    fn test_if() {
+        let input = "if (x > 10) { var y = x + 5; }";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+    
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(
+            cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Greater,
+                    Box::new(Expr::Literal(10)),
+                )),
+                then_block: vec![
+                    Stmt::VarDeclaration(
+                        "y".to_string(),
+                        Expr::BinaryOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            Op::Add,
+                            Box::new(Expr::Literal(5)),
+                        ),
+                    ),
+                ],
+                else_block: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_if_else_if() {
+        let input = "
+            if (x > 10) {
+                var y = x + 5;
+            } else if (x == 5) {
+                var y = x - 2;
+            }
+        ";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(
+            cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Greater,
+                    Box::new(Expr::Literal(10)),
+                )),
+                then_block: vec![
+                    Stmt::VarDeclaration(
+                        "y".to_string(),
+                        Expr::BinaryOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            Op::Add,
+                            Box::new(Expr::Literal(5)),
+                        ),
+                    ),
+                ],
+                else_block: Some(vec![
+                    Stmt::If {
+                        condition: Box::new(Expr::BooleanOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            BoolOp::Equal,
+                            Box::new(Expr::Literal(5)),
+                        )),
+                        then_block: vec![
+                            Stmt::VarDeclaration(
+                                "y".to_string(),
+                                Expr::BinaryOp(
+                                    Box::new(Expr::Variable("x".to_string())),
+                                    Op::Substract,
+                                    Box::new(Expr::Literal(2)),
+                                ),
+                            ),
+                        ],
+                        else_block: None,
+                    },
+                ]),
+            })
+        );
+    }
+
+    #[test]
+    fn test_if_empty_block() {
+        let input = "if (x < 5) {}";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(
+            cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Lower,
+                    Box::new(Expr::Literal(5)),
+                )),
+                then_block: vec![],
+                else_block: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_if_else_if_multiple() {
+        let input = "
+            if (x > 10) {
+                var y = x + 5;
+            } else if (x == 5) {
+                var y = x - 2;
+            } else if (x < 0) {
+                var y = 0;
+            }
+        ";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let cond = parser.parse_conditional_statement();
+        assert_eq!(
+            cond,
+            Some(Stmt::If {
+                condition: Box::new(Expr::BooleanOp(
+                    Box::new(Expr::Variable("x".to_string())),
+                    BoolOp::Greater,
+                    Box::new(Expr::Literal(10)),
+                )),
+                then_block: vec![
+                    Stmt::VarDeclaration(
+                        "y".to_string(),
+                        Expr::BinaryOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            Op::Add,
+                            Box::new(Expr::Literal(5)),
+                        ),
+                    ),
+                ],
+                else_block: Some(vec![
+                    Stmt::If {
+                        condition: Box::new(Expr::BooleanOp(
+                            Box::new(Expr::Variable("x".to_string())),
+                            BoolOp::Equal,
+                            Box::new(Expr::Literal(5)),
+                        )),
+                        then_block: vec![
+                            Stmt::VarDeclaration(
+                                "y".to_string(),
+                                Expr::BinaryOp(
+                                    Box::new(Expr::Variable("x".to_string())),
+                                    Op::Substract,
+                                    Box::new(Expr::Literal(2)),
+                                ),
+                            ),
+                        ],
+                        else_block: Some(vec![
+                            Stmt::If {
+                                condition: Box::new(Expr::BooleanOp(
+                                    Box::new(Expr::Variable("x".to_string())),
+                                    BoolOp::Lower,
+                                    Box::new(Expr::Literal(0)),
+                                )),
+                                then_block: vec![
+                                    Stmt::VarDeclaration(
+                                        "y".to_string(),
+                                        Expr::Literal(0),
+                                    ),
+                                ],
+                                else_block: None,
+                            },
+                        ]),
+                    },
+                ]),
+            })
         );
     }
 

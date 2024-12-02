@@ -11,6 +11,13 @@ pub enum Token {
     Semicolon,              // ;
     LParen,                 // (
     RParen,                 // )
+    If,                     // "if"
+    Else,                   // "else"
+    LBrace,                 // {
+    RBrace,                 // }
+    Greater,                // >
+    Lower,                  // <
+    Exclamation,            // !
     EOF,                    // End Of File
 }
 
@@ -69,6 +76,26 @@ impl Lexer {
                 self.advance();
                 Token::RParen
             }
+            Some('{') => {
+                self.advance();
+                Token::LBrace
+            }
+            Some('}') => {
+                self.advance();
+                Token::RBrace
+            }
+            Some('>') => {
+                self.advance();
+                Token::Greater
+            }
+            Some('<') => {
+                self.advance();
+                Token::Lower
+            }
+            Some('!') => {
+                self.advance();
+                Token::Exclamation
+            }
             Some(c) if c.is_ascii_digit() => {
                 let num = self.read_number();
                 Token::Number(num)
@@ -77,6 +104,8 @@ impl Lexer {
                 let ident = self.read_identifier();
                 match ident.as_str() {
                     "var" => Token::Var,
+                    "if" => Token::If,
+                    "else" => Token::Else,
                     _ => Token::Identifier(ident),
                 }
             }
@@ -142,10 +171,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lexer() {
+
+    fn test_lexer_variable() {
         let input = "var x = 10 + 20;";
         let mut lexer = Lexer::new(input.to_string());
 
+        // var x = 10 + 20;
         assert_eq!(lexer.next_token(), Token::Var);
         assert_eq!(lexer.next_token(), Token::Identifier("x".to_string()));
         assert_eq!(lexer.next_token(), Token::Equals);
@@ -157,7 +188,41 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize() {
+    fn test_lexer_if() {
+        let input = "if (x < y) { y; } else if (x > y) { x; } else { 0; }";
+        let mut lexer = Lexer::new(input.to_string());
+
+        // if (x < y) { y } else if (x > y) { x } else { 0 }
+        assert_eq!(lexer.next_token(), Token::If);
+        assert_eq!(lexer.next_token(), Token::LParen);
+        assert_eq!(lexer.next_token(), Token::Identifier("x".to_string()));
+        assert_eq!(lexer.next_token(), Token::Lower);
+        assert_eq!(lexer.next_token(), Token::Identifier("y".to_string()));
+        assert_eq!(lexer.next_token(), Token::RParen);
+        assert_eq!(lexer.next_token(), Token::LBrace);
+        assert_eq!(lexer.next_token(), Token::Identifier("y".to_string()));
+        assert_eq!(lexer.next_token(), Token::Semicolon);
+        assert_eq!(lexer.next_token(), Token::RBrace);
+        assert_eq!(lexer.next_token(), Token::Else);
+        assert_eq!(lexer.next_token(), Token::If);
+        assert_eq!(lexer.next_token(), Token::LParen);
+        assert_eq!(lexer.next_token(), Token::Identifier("x".to_string()));
+        assert_eq!(lexer.next_token(), Token::Greater);
+        assert_eq!(lexer.next_token(), Token::Identifier("y".to_string()));
+        assert_eq!(lexer.next_token(), Token::RParen);
+        assert_eq!(lexer.next_token(), Token::LBrace);
+        assert_eq!(lexer.next_token(), Token::Identifier("x".to_string()));
+        assert_eq!(lexer.next_token(), Token::Semicolon);
+        assert_eq!(lexer.next_token(), Token::RBrace);
+        assert_eq!(lexer.next_token(), Token::Else);
+        assert_eq!(lexer.next_token(), Token::LBrace);
+        assert_eq!(lexer.next_token(), Token::Number(0));
+        assert_eq!(lexer.next_token(), Token::Semicolon);
+        assert_eq!(lexer.next_token(), Token::RBrace);
+    }
+
+    #[test]
+    fn test_tokenize_variable() {
         let input = "var x = 10 + 20;";
         let mut lexer = Lexer::new(input.to_string());
         let tokens = lexer.tokenize();
@@ -172,6 +237,46 @@ mod tests {
                 Token::Plus,
                 Token::Number(20),
                 Token::Semicolon,
+                Token::EOF
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tokenize_if() {
+        let input = "if (x < y) { y; } else if (x > y) { x; } else { 0; }";
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+
+        assert_eq!(
+            tokens,
+            vec![
+                Token::If,
+                Token::LParen,
+                Token::Identifier("x".to_string()),
+                Token::Lower,
+                Token::Identifier("y".to_string()),
+                Token::RParen,
+                Token::LBrace,
+                Token::Identifier("y".to_string()),
+                Token::Semicolon,
+                Token::RBrace,
+                Token::Else,
+                Token::If,
+                Token::LParen,
+                Token::Identifier("x".to_string()),
+                Token::Greater,
+                Token::Identifier("y".to_string()),
+                Token::RParen,
+                Token::LBrace,
+                Token::Identifier("x".to_string()),
+                Token::Semicolon,
+                Token::RBrace,
+                Token::Else,
+                Token::LBrace,
+                Token::Number(0),
+                Token::Semicolon,
+                Token::RBrace,
                 Token::EOF
             ]
         );

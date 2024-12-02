@@ -11,7 +11,13 @@ fn main() {
         var x = 10;
         var y = 20;
         var z = x + y;
-        x / (y * z) - x + y;
+        if (x > 10) {
+            var y = x * 2;
+        } else if (x > 5) {
+            var y = x + 1;
+        } else {
+            var y = 0;
+        }
     ";
 
     let mut lexer = Lexer::new(input.to_string());
