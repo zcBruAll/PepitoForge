@@ -18,6 +18,8 @@ pub enum Token {
     Greater,                // >
     Lower,                  // <
     Exclamation,            // !
+    Ampersand,              // &
+    Pipe,                   // |
     EOF,                    // End Of File
 }
 
@@ -95,6 +97,14 @@ impl Lexer {
             Some('!') => {
                 self.advance();
                 Token::Exclamation
+            }
+            Some('&') => {
+                self.advance();
+                Token::Ampersand
+            }
+            Some('|') => {
+                self.advance();
+                Token::Pipe
             }
             Some(c) if c.is_ascii_digit() => {
                 let num = self.read_number();

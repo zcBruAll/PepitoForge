@@ -4,8 +4,10 @@
  * statement                ::= var_declaration | expression_statement | conditional_statement
  * var_declaration          ::= 'var' identifier '=' expression ';'
  * expression_statement     ::= expression ';'
- * conditional_statement    ::= 'if' '(' comparison ')' block ('else if' '(' expression ')' block)* ('else' block)?
- * condition                ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
+ * conditional_statement    ::= 'if' '(' condition ')' block ('else if' '(' expression ')' block)* ('else' block)?
+ * condition                ::= logical_and ('||' logical_and)*
+ * logical_and              ::= comparison ('&&' comparison)*
+ * comparison               ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
  * block                    ::= '{' statement* '}'
  * expression               ::= term (('+' | '-') term)*
  * term                     ::= factor (('*' | '/') factor)*
@@ -21,7 +23,6 @@
  * }
  */
 
-
 use core::panic;
 
 use crate::lexer::Token;
@@ -32,7 +33,7 @@ pub enum Expr {
     Variable(String),
     BinaryOp(Box<Expr>, Op, Box<Expr>),
     BooleanOp(Box<Expr>, BoolOp, Box<Expr>),
-    // TODO: LogicalOp
+    LogicalOp(Box<Expr>, LogicalOp, Box<Expr>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,6 +63,12 @@ pub enum BoolOp {
     LowerOrEq,
     Equal,
     NotEqual,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum LogicalOp {
+    And,
+    Or,
 }
 
 pub struct Parser {
@@ -141,7 +148,7 @@ impl Parser {
         None
     }
 
-    // conditional_statement ::= 'if' '(' expression ')' block ('else if' '(' expression ')' block)* ('else' block)?
+    // conditional_statement ::= 'if' '(' condition ')' block ('else if' '(' expression ')' block)* ('else' block)?
     pub fn parse_conditional_statement(&mut self) -> Option<Stmt> {
         if let Some(Token::If) = self.current_token() {
             self.advance();
@@ -170,8 +177,44 @@ impl Parser {
         None
     }
 
-    // condition ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
+    // condition ::= logical_and ('||' logical_and)*
     pub fn parse_condition(&mut self) -> Option<Expr> {
+        let mut cond = self.parse_logical_and()?;
+
+        if let Some(Token::Pipe) = self.current_token() {
+            self.advance();
+            if let Some(Token::Pipe) = self.current_token() {
+                self.advance();
+                let right = self.parse_logical_and()?;
+                cond = Expr::LogicalOp(Box::new(cond), LogicalOp::Or, Box::new(right));
+            } else {
+                panic!("Unexpected token after '|'");
+            }
+        }
+
+        Some(cond)
+    }
+
+    // logical_and ::= comparison ('&&' comparison)*
+    pub fn parse_logical_and(&mut self) -> Option<Expr> {
+        let mut comp = self.parse_comparison()?;
+
+        if let Some(Token::Ampersand) = self.current_token() {
+            self.advance();
+            if let Some(Token::Ampersand) = self.current_token() {
+                self.advance();
+                let right = self.parse_comparison()?;
+                comp = Expr::LogicalOp(Box::new(comp), LogicalOp::And, Box::new(right));
+            } else {
+                panic!("Unecpected token after '&'");
+            }
+        }
+
+        Some(comp)
+    }
+
+    // comparison ::= expression ('<' | '>' | '<=' | '>=' | '==' | '!=') expression
+    pub fn parse_comparison(&mut self) -> Option<Expr> {
         let mut expr = self.parse_expression()?;
 
         match self.current_token()? {
@@ -331,7 +374,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{BoolOp, Op};
+    use crate::parser::{BoolOp, LogicalOp, Op};
     use crate::{lexer::Lexer, parser::{Expr, Parser, Stmt}};
 
     #[test]
@@ -653,6 +696,129 @@ mod tests {
                     },
                 ]),
             })
+        );
+    }
+
+    #[test]
+    fn test_condition_or() {
+        let input = "
+            x <= 5 || y >= 10
+        ";
+
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let condition = parser.parse_condition();
+
+        assert_eq!(condition, 
+            Some(            
+                Expr::LogicalOp(
+                Box::new(
+                    Expr::BooleanOp(
+                        Box::new(Expr::Variable("x".to_string())), 
+                        BoolOp::LowerOrEq, 
+                        Box::new(Expr::Literal(5))
+                    )
+                ), 
+                LogicalOp::Or, 
+                Box::new(
+                    Expr::BooleanOp(
+                        Box::new(
+                            Expr::Variable("y".to_string())
+                        ), 
+                        BoolOp::GreaterOrEq, 
+                        Box::new(
+                            Expr::Literal(10)
+                        )
+                    )
+                )
+            ))
+        )
+    }
+
+    #[test]
+    fn test_condition_and() {
+        let input = "
+            x <= 5 && y >= 10
+        ";
+
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let condition = parser.parse_condition();
+
+        assert_eq!(condition, 
+            Some(            
+                Expr::LogicalOp(
+                Box::new(
+                    Expr::BooleanOp(
+                        Box::new(Expr::Variable("x".to_string())), 
+                        BoolOp::LowerOrEq, 
+                        Box::new(Expr::Literal(5))
+                    )
+                ), 
+                LogicalOp::And, 
+                Box::new(
+                    Expr::BooleanOp(
+                        Box::new(
+                            Expr::Variable("y".to_string())
+                        ), 
+                        BoolOp::GreaterOrEq, 
+                        Box::new(
+                            Expr::Literal(10)
+                        )
+                    )
+                )
+            ))
+        )
+    }
+
+    #[test]
+    fn test_cond_or_and() {
+        let input = "
+            x <= 5 && y >= 10 || x == y
+        ";
+
+        let mut lexer = Lexer::new(input.to_string());
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+
+        let condition = parser.parse_condition();
+
+        assert_eq!(condition, 
+            Some(
+                Expr::LogicalOp(
+                    Box::new(Expr::LogicalOp(
+                        Box::new(
+                            Expr::BooleanOp(
+                                Box::new(Expr::Variable("x".to_string())), 
+                                BoolOp::LowerOrEq, 
+                                Box::new(Expr::Literal(5))
+                            )
+                        ), 
+                        LogicalOp::And, 
+                        Box::new(
+                            Expr::BooleanOp(
+                                Box::new(
+                                    Expr::Variable("y".to_string())
+                                ), 
+                                BoolOp::GreaterOrEq, 
+                                Box::new(
+                                    Expr::Literal(10)
+                                )
+                            )
+                        )
+                    )), 
+                    LogicalOp::Or,
+                    Box::new(Expr::BooleanOp(
+                        Box::new(Expr::Variable("x".to_string())), 
+                        BoolOp::Equal,
+                        Box::new(Expr::Variable("y".to_string()))
+                    ))
+                )
+            )
         );
     }
 

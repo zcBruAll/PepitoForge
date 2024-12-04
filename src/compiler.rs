@@ -80,7 +80,8 @@ impl Compiler {
 
                 "eax".to_string()
             },
-            Expr::BooleanOp(left, op, right) => todo!("Boolean operations coming soon!")
+            Expr::BooleanOp(left, op, right) => todo!("Boolean operations coming soon!"),
+            Expr::LogicalOp(left, op, right) => todo!("Boolean operations coming soon!"),
         }
     }
 
